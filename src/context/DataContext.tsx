@@ -1,4 +1,5 @@
 import React, { createContext, useContext, useState, useEffect } from 'react';
+import { supabase } from '../supabaseClient'; // make sure you created supabaseClient.ts as discussed
 import {
   Request,
   Message,
@@ -23,9 +24,9 @@ interface DataContextType {
   foodDetails: Record<string, FoodDeliveryDetails>;
   parcelDetails: Record<string, ParcelPickupDetails>;
   martDetails: Record<string, MartPickupDetails>;
-  createRequest: (request: Omit<Request, 'id' | 'createdAt'>, details: any) => void;
-  updateRequest: (id: string, updates: Partial<Request>) => void;
-  deleteRequest: (id: string) => void;
+  createRequest: (request: Omit<Request, 'id' | 'createdAt'>, details: any) => Promise<void>;
+  updateRequest: (id: string, updates: Partial<Request>) => Promise<void>;
+  deleteRequest: (id: string) => Promise<void>;
   sendMessage: (message: Omit<Message, 'id' | 'createdAt'>) => void;
   createRating: (rating: Omit<Rating, 'id' | 'createdAt'>) => void;
   addPoints: (userId: string, points: number, reason: string, requestId?: string) => void;
@@ -58,140 +59,110 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const [parcelDetails, setParcelDetails] = useState<Record<string, ParcelPickupDetails>>({});
   const [martDetails, setMartDetails] = useState<Record<string, MartPickupDetails>>({});
 
+  // Fetch requests from Supabase on mount
   useEffect(() => {
-    const storedRequests = localStorage.getItem('snappi_requests');
-    const storedMessages = localStorage.getItem('snappi_messages');
-    const storedRatings = localStorage.getItem('snappi_ratings');
-    const storedUserBadges = localStorage.getItem('snappi_user_badges');
-    const storedPointsHistory = localStorage.getItem('snappi_points_history');
-    const storedAnnouncements = localStorage.getItem('snappi_announcements');
-    const storedFoodDetails = localStorage.getItem('snappi_food_details');
-    const storedParcelDetails = localStorage.getItem('snappi_parcel_details');
-    const storedMartDetails = localStorage.getItem('snappi_mart_details');
+    const fetchRequests = async () => {
+      const { data, error } = await supabase
+        .from('requests')
+        .select('*')
+        .order('created_at', { ascending: false });
 
-    if (storedRequests) setRequests(JSON.parse(storedRequests));
-    if (storedMessages) setMessages(JSON.parse(storedMessages));
-    if (storedRatings) setRatings(JSON.parse(storedRatings));
-    if (storedUserBadges) setUserBadges(JSON.parse(storedUserBadges));
-    if (storedPointsHistory) setPointsHistory(JSON.parse(storedPointsHistory));
-    if (storedAnnouncements) setAnnouncements(JSON.parse(storedAnnouncements));
-    if (storedFoodDetails) setFoodDetails(JSON.parse(storedFoodDetails));
-    if (storedParcelDetails) setParcelDetails(JSON.parse(storedParcelDetails));
-    if (storedMartDetails) setMartDetails(JSON.parse(storedMartDetails));
+      if (error) {
+        console.error('Error fetching requests:', error);
+      } else if (data) {
+        setRequests(data as Request[]);
+      }
+    };
+    fetchRequests();
   }, []);
 
-  const createRequest = (requestData: Omit<Request, 'id' | 'createdAt'>, details: any) => {
-    const newRequest: Request = {
-      ...requestData,
-      id: Date.now().toString(),
-      createdAt: new Date(),
-    };
+  // CREATE REQUEST
+  const createRequest = async (requestData: Omit<Request, 'id' | 'createdAt'>, details: any) => {
+    const { data, error } = await supabase
+      .from('requests')
+      .insert([
+        {
+          ...requestData
+        }
+      ])
+      .select();
 
-    const updatedRequests = [...requests, newRequest];
-    setRequests(updatedRequests);
-    localStorage.setItem('snappi_requests', JSON.stringify(updatedRequests));
+    if (error) {
+      console.error('Error creating request:', error);
+      return;
+    }
 
+    const newRequest = data?.[0] as Request;
+    setRequests([newRequest, ...requests]);
+
+    // Optional: handle food/parcel/mart details locally
     if (requestData.requestType === 'food_delivery') {
-      const newFoodDetails = { ...foodDetails, [newRequest.id]: { ...details, requestId: newRequest.id } };
-      setFoodDetails(newFoodDetails);
-      localStorage.setItem('snappi_food_details', JSON.stringify(newFoodDetails));
+      setFoodDetails({ ...foodDetails, [newRequest.id]: { ...details, requestId: newRequest.id } });
     } else if (requestData.requestType === 'parcel_pickup') {
-      const newParcelDetails = { ...parcelDetails, [newRequest.id]: { ...details, requestId: newRequest.id } };
-      setParcelDetails(newParcelDetails);
-      localStorage.setItem('snappi_parcel_details', JSON.stringify(newParcelDetails));
+      setParcelDetails({ ...parcelDetails, [newRequest.id]: { ...details, requestId: newRequest.id } });
     } else if (requestData.requestType === 'mart_pickup') {
-      const newMartDetails = { ...martDetails, [newRequest.id]: { ...details, requestId: newRequest.id } };
-      setMartDetails(newMartDetails);
-      localStorage.setItem('snappi_mart_details', JSON.stringify(newMartDetails));
+      setMartDetails({ ...martDetails, [newRequest.id]: { ...details, requestId: newRequest.id } });
     }
   };
 
-  const updateRequest = (id: string, updates: Partial<Request>) => {
-    const updatedRequests = requests.map(req =>
-      req.id === id ? { ...req, ...updates } : req
-    );
-    setRequests(updatedRequests);
-    localStorage.setItem('snappi_requests', JSON.stringify(updatedRequests));
+  // UPDATE REQUEST
+  const updateRequest = async (id: string, updates: Partial<Request>) => {
+    const { data, error } = await supabase
+      .from('requests')
+      .update(updates)
+      .eq('id', id)
+      .select();
+
+    if (error) {
+      console.error('Error updating request:', error);
+      return;
+    }
+
+    const updatedRequest = data?.[0] as Request;
+    setRequests(requests.map(r => r.id === id ? updatedRequest : r));
   };
 
-  const deleteRequest = (id: string) => {
-    const updatedRequests = requests.filter(req => req.id !== id);
-    setRequests(updatedRequests);
-    localStorage.setItem('snappi_requests', JSON.stringify(updatedRequests));
+  // DELETE REQUEST
+  const deleteRequest = async (id: string) => {
+    const { error } = await supabase
+      .from('requests')
+      .delete()
+      .eq('id', id);
+
+    if (error) {
+      console.error('Error deleting request:', error);
+      return;
+    }
+
+    setRequests(requests.filter(r => r.id !== id));
   };
 
+  // Keep other functions localStorage for now
   const sendMessage = (messageData: Omit<Message, 'id' | 'createdAt'>) => {
-    const newMessage: Message = {
-      ...messageData,
-      id: Date.now().toString(),
-      createdAt: new Date(),
-    };
-
+    const newMessage: Message = { ...messageData, id: Date.now().toString(), createdAt: new Date() };
     const updatedMessages = [...messages, newMessage];
     setMessages(updatedMessages);
-    localStorage.setItem('snappi_messages', JSON.stringify(updatedMessages));
   };
 
   const createRating = (ratingData: Omit<Rating, 'id' | 'createdAt'>) => {
-    const newRating: Rating = {
-      ...ratingData,
-      id: Date.now().toString(),
-      createdAt: new Date(),
-    };
-
-    const updatedRatings = [...ratings, newRating];
-    setRatings(updatedRatings);
-    localStorage.setItem('snappi_ratings', JSON.stringify(updatedRatings));
+    const newRating: Rating = { ...ratingData, id: Date.now().toString(), createdAt: new Date() };
+    setRatings([...ratings, newRating]);
   };
 
   const addPoints = (userId: string, points: number, reason: string, requestId?: string) => {
-    const newEntry: PointsHistory = {
-      id: Date.now().toString(),
-      userId,
-      points,
-      reason,
-      requestId,
-      createdAt: new Date(),
-    };
-
-    const updatedHistory = [...pointsHistory, newEntry];
-    setPointsHistory(updatedHistory);
-    localStorage.setItem('snappi_points_history', JSON.stringify(updatedHistory));
-
-    const users = JSON.parse(localStorage.getItem('snappi_users') || '[]');
-    const userIndex = users.findIndex((u: any) => u.id === userId);
-    if (userIndex !== -1) {
-      users[userIndex].totalPoints = (users[userIndex].totalPoints || 0) + points;
-      localStorage.setItem('snappi_users', JSON.stringify(users));
-    }
+    const newEntry: PointsHistory = { id: Date.now().toString(), userId, points, reason, requestId, createdAt: new Date() };
+    setPointsHistory([...pointsHistory, newEntry]);
   };
 
   const awardBadge = (userId: string, badgeId: string) => {
-    const existing = userBadges.find(ub => ub.userId === userId && ub.badgeId === badgeId);
-    if (existing) return;
-
-    const newBadge: UserBadge = {
-      id: Date.now().toString(),
-      userId,
-      badgeId,
-      earnedAt: new Date(),
-    };
-
-    const updatedBadges = [...userBadges, newBadge];
-    setUserBadges(updatedBadges);
-    localStorage.setItem('snappi_user_badges', JSON.stringify(updatedBadges));
+    const exists = userBadges.find(ub => ub.userId === userId && ub.badgeId === badgeId);
+    if (exists) return;
+    setUserBadges([...userBadges, { id: Date.now().toString(), userId, badgeId, earnedAt: new Date() }]);
   };
 
   const createAnnouncement = (announcementData: Omit<Announcement, 'id' | 'createdAt'>) => {
-    const newAnnouncement: Announcement = {
-      ...announcementData,
-      id: Date.now().toString(),
-      createdAt: new Date(),
-    };
-
-    const updatedAnnouncements = [...announcements, newAnnouncement];
-    setAnnouncements(updatedAnnouncements);
-    localStorage.setItem('snappi_announcements', JSON.stringify(updatedAnnouncements));
+    const newAnnouncement: Announcement = { ...announcementData, id: Date.now().toString(), createdAt: new Date() };
+    setAnnouncements([...announcements, newAnnouncement]);
   };
 
   return (
@@ -222,8 +193,6 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
 export const useData = () => {
   const context = useContext(DataContext);
-  if (!context) {
-    throw new Error('useData must be used within DataProvider');
-  }
+  if (!context) throw new Error('useData must be used within DataProvider');
   return context;
 };
