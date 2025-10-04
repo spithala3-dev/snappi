@@ -59,24 +59,19 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const [parcelDetails, setParcelDetails] = useState<Record<string, ParcelPickupDetails>>({});
   const [martDetails, setMartDetails] = useState<Record<string, MartPickupDetails>>({});
 
-  // Fetch requests from Supabase on mount
+  // Fetch requests from Supabase
   const fetchRequests = async () => {
     const { data, error } = await supabase
       .from('requests')
       .select('*')
       .order('created_at', { ascending: false });
-
-    if (error) {
-      console.error('Error fetching requests:', error);
-    } else if (data) {
-      setRequests(data as Request[]);
-    }
+    if (error) console.error('Error fetching requests:', error);
+    else if (data) setRequests(data as Request[]);
   };
 
   useEffect(() => {
     fetchRequests();
 
-    // Optional: Real-time listener
     const subscription = supabase
       .from('requests')
       .on('INSERT', payload => {
@@ -95,18 +90,13 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
       .from('requests')
       .insert([{ ...requestData }])
       .select();
-
     if (error) {
       console.error('Error creating request:', error);
       return;
     }
+    await fetchRequests(); // fetch updated requests
 
     const newRequest = data?.[0] as Request;
-
-    // Instead of using stale requests, fetch latest
-    await fetchRequests();
-
-    // Optional: handle food/parcel/mart details locally
     if (requestData.requestType === 'food_delivery') {
       setFoodDetails(prev => ({ ...prev, [newRequest.id]: { ...details, requestId: newRequest.id } }));
     } else if (requestData.requestType === 'parcel_pickup') {
@@ -123,12 +113,10 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
       .update(updates)
       .eq('id', id)
       .select();
-
     if (error) {
       console.error('Error updating request:', error);
       return;
     }
-
     await fetchRequests();
   };
 
@@ -138,16 +126,14 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
       .from('requests')
       .delete()
       .eq('id', id);
-
     if (error) {
       console.error('Error deleting request:', error);
       return;
     }
-
     await fetchRequests();
   };
 
-  // Other local functions stay the same
+  // Local functions
   const sendMessage = (messageData: Omit<Message, 'id' | 'createdAt'>) => {
     const newMessage: Message = { ...messageData, id: Date.now().toString(), createdAt: new Date() };
     setMessages(prev => [...prev, newMessage]);
@@ -170,4 +156,38 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
   };
 
   const createAnnouncement = (announcementData: Omit<Announcement, 'id' | 'createdAt'>) => {
-    const newAnnouncement: Announcement = {
+    const newAnnouncement: Announcement = { ...announcementData, id: Date.now().toString(), createdAt: new Date() };
+    setAnnouncements(prev => [...prev, newAnnouncement]);
+  };
+
+  return (
+    <DataContext.Provider value={{
+      requests,
+      messages,
+      ratings,
+      badges,
+      userBadges,
+      pointsHistory,
+      announcements,
+      foodDetails,
+      parcelDetails,
+      martDetails,
+      createRequest,
+      updateRequest,
+      deleteRequest,
+      sendMessage,
+      createRating,
+      addPoints,
+      awardBadge,
+      createAnnouncement
+    }}>
+      {children}
+    </DataContext.Provider>
+  );
+};
+
+export const useData = () => {
+  const context = useContext(DataContext);
+  if (!context) throw new Error('useData must be used within DataProvider');
+  return context;
+};
