@@ -1,3 +1,4 @@
+// src/context/DataContext.tsx
 import React, { createContext, useContext, useState, useEffect } from 'react';
 import { supabase } from '../supabaseClient';
 import {
@@ -24,14 +25,14 @@ interface DataContextType {
   foodDetails: Record<string, FoodDeliveryDetails>;
   parcelDetails: Record<string, ParcelPickupDetails>;
   martDetails: Record<string, MartPickupDetails>;
-  createRequest: (request: Omit<Request, 'id' | 'createdAt'>, details: any) => Promise<void>;
+  createRequest: (request: Omit<Request, 'id' | 'created_at'>, details: any) => Promise<void>;
   updateRequest: (id: string, updates: Partial<Request>) => Promise<void>;
   deleteRequest: (id: string) => Promise<void>;
   sendMessage: (message: Omit<Message, 'id' | 'createdAt'>) => void;
   createRating: (rating: Omit<Rating, 'id' | 'createdAt'>) => void;
   addPoints: (userId: string, points: number, reason: string, requestId?: string) => void;
   awardBadge: (userId: string, badgeId: string) => void;
-  createAnnouncement: (announcement: Omit<Announcement, 'id' | 'createdAt'>) => void;
+  createAnnouncement: (announcement: Omit<Announcement, 'id' | 'created_at'>) => void;
 }
 
 const DataContext = createContext<DataContextType | undefined>(undefined);
@@ -59,43 +60,71 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const [parcelDetails, setParcelDetails] = useState<Record<string, ParcelPickupDetails>>({});
   const [martDetails, setMartDetails] = useState<Record<string, MartPickupDetails>>({});
 
-  // Fetch requests from Supabase
+  // Fetch requests
   const fetchRequests = async () => {
     const { data, error } = await supabase
       .from('requests')
       .select('*')
       .order('created_at', { ascending: false });
+
     if (error) console.error('Error fetching requests:', error);
     else if (data) setRequests(data as Request[]);
   };
 
-  useEffect(() => {
-  fetchRequests();
+  // Fetch announcements
+  const fetchAnnouncements = async () => {
+    const { data, error } = await supabase
+      .from('announcements')
+      .select('*')
+      .order('created_at', { ascending: false });
 
-  const channel = supabase.channel('public:requests')
-    .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'requests' }, payload => {
-      setRequests(prev => [payload.new as Request, ...prev]);
-    })
-    .subscribe();
-
-  return () => {
-    supabase.removeChannel(channel);
+    if (error) console.error('Error fetching announcements:', error);
+    else if (data) setAnnouncements(data as Announcement[]);
   };
-}, []);
+
+  useEffect(() => {
+    fetchRequests();
+    fetchAnnouncements();
+
+    // Supabase v2 real-time subscription
+    const requestsChannel = supabase
+      .channel('requests')
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'requests' }, payload => {
+        if (payload.eventType === 'INSERT') setRequests(prev => [payload.new as Request, ...prev]);
+        if (payload.eventType === 'UPDATE') setRequests(prev => prev.map(r => r.id === payload.new.id ? payload.new as Request : r));
+        if (payload.eventType === 'DELETE') setRequests(prev => prev.filter(r => r.id !== payload.old.id));
+      })
+      .subscribe();
+
+    const announcementsChannel = supabase
+      .channel('announcements')
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'announcements' }, payload => {
+        if (payload.eventType === 'INSERT') setAnnouncements(prev => [payload.new as Announcement, ...prev]);
+        if (payload.eventType === 'UPDATE') setAnnouncements(prev => prev.map(a => a.id === payload.new.id ? payload.new as Announcement : a));
+        if (payload.eventType === 'DELETE') setAnnouncements(prev => prev.filter(a => a.id !== payload.old.id));
+      })
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(requestsChannel);
+      supabase.removeChannel(announcementsChannel);
+    };
+  }, []);
 
   // CREATE REQUEST
-  const createRequest = async (requestData: Omit<Request, 'id' | 'createdAt'>, details: any) => {
+  const createRequest = async (requestData: Omit<Request, 'id' | 'created_at'>, details: any) => {
     const { data, error } = await supabase
       .from('requests')
       .insert([{ ...requestData }])
       .select();
+
     if (error) {
       console.error('Error creating request:', error);
       return;
     }
-    await fetchRequests(); // fetch updated requests
 
     const newRequest = data?.[0] as Request;
+
     if (requestData.requestType === 'food_delivery') {
       setFoodDetails(prev => ({ ...prev, [newRequest.id]: { ...details, requestId: newRequest.id } }));
     } else if (requestData.requestType === 'parcel_pickup') {
@@ -105,34 +134,25 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
     }
   };
 
-  // UPDATE REQUEST
   const updateRequest = async (id: string, updates: Partial<Request>) => {
     const { data, error } = await supabase
       .from('requests')
       .update(updates)
       .eq('id', id)
       .select();
-    if (error) {
-      console.error('Error updating request:', error);
-      return;
-    }
-    await fetchRequests();
+
+    if (error) console.error('Error updating request:', error);
   };
 
-  // DELETE REQUEST
   const deleteRequest = async (id: string) => {
     const { error } = await supabase
       .from('requests')
       .delete()
       .eq('id', id);
-    if (error) {
-      console.error('Error deleting request:', error);
-      return;
-    }
-    await fetchRequests();
+
+    if (error) console.error('Error deleting request:', error);
   };
 
-  // Local functions
   const sendMessage = (messageData: Omit<Message, 'id' | 'createdAt'>) => {
     const newMessage: Message = { ...messageData, id: Date.now().toString(), createdAt: new Date() };
     setMessages(prev => [...prev, newMessage]);
@@ -154,8 +174,8 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
     setUserBadges(prev => [...prev, { id: Date.now().toString(), userId, badgeId, earnedAt: new Date() }]);
   };
 
-  const createAnnouncement = (announcementData: Omit<Announcement, 'id' | 'createdAt'>) => {
-    const newAnnouncement: Announcement = { ...announcementData, id: Date.now().toString(), createdAt: new Date() };
+  const createAnnouncement = (announcementData: Omit<Announcement, 'id' | 'created_at'>) => {
+    const newAnnouncement: Announcement = { ...announcementData, id: Date.now().toString(), created_at: new Date() };
     setAnnouncements(prev => [...prev, newAnnouncement]);
   };
 
