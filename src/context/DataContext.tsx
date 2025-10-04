@@ -70,19 +70,18 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
   };
 
   useEffect(() => {
-    fetchRequests();
+  fetchRequests();
 
-    const subscription = supabase
-      .from('requests')
-      .on('INSERT', payload => {
-        setRequests(prev => [payload.new as Request, ...prev]);
-      })
-      .subscribe();
+  const channel = supabase.channel('public:requests')
+    .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'requests' }, payload => {
+      setRequests(prev => [payload.new as Request, ...prev]);
+    })
+    .subscribe();
 
-    return () => {
-      supabase.removeSubscription(subscription);
-    };
-  }, []);
+  return () => {
+    supabase.removeChannel(channel);
+  };
+}, []);
 
   // CREATE REQUEST
   const createRequest = async (requestData: Omit<Request, 'id' | 'createdAt'>, details: any) => {
